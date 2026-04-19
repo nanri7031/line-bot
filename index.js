@@ -10,21 +10,24 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
-// ===== 管理者構造 =====
+// ===== 本管理（BOTも含める）=====
 let adminData = {
-  owner: ['Ud9ae0b76918ab20e33fb8b25c78a5f95'], // 本管理
-  sub: [] // 副管理
+  owner: [
+    'Ud9ae0b76918ab20e33fb8b25c78a5f95',
+    'BOT_USER_ID'
+  ],
+  sub: []
 };
 
 const ngWords = ['死ね','バカ','消えろ','アホ'];
 let userData = {};
 
 // ===== 保存 =====
-function save() {
-  fs.writeFileSync('data.json', JSON.stringify({ userData, adminData }, null, 2));
+function save(){
+  fs.writeFileSync('data.json', JSON.stringify({userData,adminData},null,2));
 }
-function load() {
-  if (fs.existsSync('data.json')) {
+function load(){
+  if(fs.existsSync('data.json')){
     const d = JSON.parse(fs.readFileSync('data.json'));
     userData = d.userData || {};
     adminData = d.adminData || adminData;
@@ -32,9 +35,9 @@ function load() {
 }
 load();
 
-// ===== 権限チェック =====
-function isOwner(id){ return adminData.owner.includes(id); }
-function isAdmin(id){ return isOwner(id) || adminData.sub.includes(id); }
+// ===== 権限 =====
+const isOwner = id => adminData.owner.includes(id);
+const isAdmin = id => isOwner(id) || adminData.sub.includes(id);
 
 // ===== 名前検索 =====
 function findUser(name){
@@ -42,10 +45,11 @@ function findUser(name){
 }
 
 // ===== Webhook =====
-app.post('/webhook', line.middleware(config), (req,res)=>{
+app.post('/webhook', line.middleware(config),(req,res)=>{
   Promise.all(req.body.events.map(handleEvent)).then(()=>res.end());
 });
 
+// ===== メイン =====
 async function handleEvent(event){
 
   // ===== 新規参加 =====
@@ -65,13 +69,23 @@ async function handleEvent(event){
 
       await client.replyMessage(event.replyToken,{
         type:'text',
-        text:`@${name} さん ようこそ！`
+        text:
+`@${name} さん
+
+ようこそ！
+グルに参加ありがとうございます。
+
+さて、グルに参加したら、まずルールを確認してね。
+だいたいのグルは、ノートにルールが書いてあります。
+ルールはノートの下の方に書いてあることが多いけど、たまに真ん中や上の方にも書いてあることがあります。出来るだけ全部目を通しましょう。確認しましたらイイね押して下さいねっ！
+
+お時間あるメンバー様は挨拶お願い致します。`
       });
     }
     return;
   }
 
-  // ===== ボタン処理 =====
+  // ===== ボタン操作 =====
   if(event.type==='postback'){
     const [action,id]=event.postback.data.split(':');
     const groupId=event.source.groupId;
@@ -93,7 +107,7 @@ async function handleEvent(event){
   const groupId=event.source.groupId;
   const now=Date.now();
 
-  // ===== 初期化 =====
+  // ===== 初期登録 =====
   if(!userData[userId]){
     const p=await client.getProfile(userId);
     userData[userId]={
@@ -136,7 +150,7 @@ async function handleEvent(event){
   if(event.message.type==='text'){
     const text=event.message.text;
 
-    // ===== コマンド =====
+    // ===== 管理コマンド =====
     if(text.startsWith('/')){
 
       if(!isAdmin(userId)) return reply(event,'権限なし');
@@ -145,10 +159,13 @@ async function handleEvent(event){
       const cmd=parts[0];
       const name=parts[1];
 
-      // ===== 管理者一覧 =====
       if(cmd==='/管理者一覧'){
         return reply(event,
-          `本管理\n${adminData.owner.map(id=>userData[id]?.name||id).join('\n')}\n\n副管理\n${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
+`本管理
+${adminData.owner.map(id=>userData[id]?.name||id).join('\n')}
+
+副管理
+${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
         );
       }
 
@@ -157,7 +174,6 @@ async function handleEvent(event){
 
       const [targetId,target]=found;
 
-      // ===== 本管理のみ =====
       if(cmd==='/本管理追加'){
         if(!isOwner(userId)) return reply(event,'本管理のみ');
         adminData.owner.push(targetId);
@@ -180,14 +196,13 @@ async function handleEvent(event){
         return reply(event,'削除完了');
       }
 
-      // ===== 共通管理 =====
       if(cmd==='/キック'){
         await client.kickoutFromGroup(groupId,[targetId]);
-        return reply(event,'キック');
+        return reply(event,'キック完了');
       }
     }
 
-    // NG
+    // NGワード
     if(ngWords.some(w=>text.includes(w))){
       user.warns++;
       warned=true;
@@ -216,7 +231,7 @@ async function handleEvent(event){
       return reply(event,'通報受付');
     }
 
-    // 管理画面
+    // 管理UI
     if(text==='/管理'){
       if(!isAdmin(userId)) return reply(event,'権限なし');
 
@@ -255,7 +270,7 @@ async function handleEvent(event){
     return reply(event,`⚠️ ${user.name} 警告(${user.warns})`);
   }
 
-  // 自動BAN
+  // ===== 自動キック =====
   if(user.warns>=5 && user.reports>=2){
     user.permanentBan=true;
     save();
@@ -265,18 +280,12 @@ async function handleEvent(event){
 
 // ===== ボタン =====
 function btn(label,data){
-  return{
-    type:'button',
-    action:{type:'postback',label,data}
-  };
+  return {type:'button',action:{type:'postback',label,data}};
 }
 
 // ===== 返信 =====
 function reply(event,text){
-  return client.replyMessage(event.replyToken,{
-    type:'text',
-    text
-  });
+  return client.replyMessage(event.replyToken,{type:'text',text});
 }
 
 app.listen(3000);
