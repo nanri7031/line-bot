@@ -10,7 +10,7 @@ const app = express();
 const client = new line.Client(config);
 
 // ===== 設定 =====
-const admins = ['ここにあなたのユーザーID']; // ←後で入れる
+const admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95']; // ←後で入れる
 const ngWords = ['死ね', 'バカ', '消えろ'];
 
 // ===== ユーザーデータ =====
@@ -34,7 +34,7 @@ async function handleEvent(event) {
   const userId = event.source.userId;
 
   // ===== 画像・スタンプ無視 =====
-  if (event.message.type !== 'text') return Promise.resolve(null);
+ととののほ  if (event.message.type !== 'text') return Promise.resolve(null);
 
   const text = event.message.text;
   const now = Date.now();
