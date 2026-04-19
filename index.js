@@ -10,201 +10,236 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
-// ===== 管理者 =====
-const admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95'];
-
-// ===== NGワード =====
+let admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95'];
 const ngWords = ['死ね', 'バカ', '消えろ', 'アホ'];
 
-// ===== データ =====
 let userData = {};
 
 // ===== 保存 =====
 function save() {
-  fs.writeFileSync('data.json', JSON.stringify(userData, null, 2));
+  fs.writeFileSync('data.json', JSON.stringify({ userData, admins }, null, 2));
 }
 function load() {
   if (fs.existsSync('data.json')) {
-    userData = JSON.parse(fs.readFileSync('data.json'));
+    const d = JSON.parse(fs.readFileSync('data.json'));
+    userData = d.userData || {};
+    admins = d.admins || admins;
   }
 }
 load();
 
-// ===== 名前検索 =====
-function findUser(name) {
-  return Object.entries(userData).find(
-    ([id, u]) => u.name === name
-  );
-}
-
 // ===== Webhook =====
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
-    .then(() => res.end())
-    .catch(() => res.end());
+    .then(() => res.end());
 });
 
 // ===== メイン =====
 async function handleEvent(event) {
 
-  // ===== 新規参加（名前付き）=====
+  // ===== 新規参加 =====
   if (event.type === 'memberJoined') {
 
-    const newMembers = event.joined.members;
+    for (let m of event.joined.members) {
 
-    let messages = [];
+      if (userData[m.userId]?.permanentBan) {
+        try {
+          await client.kickoutFromGroup(event.source.groupId, [m.userId]);
+        } catch {}
+        continue;
+      }
 
-    for (let m of newMembers) {
       let name = 'ユーザー';
-
       try {
-        const profile = await client.getGroupMemberProfile(event.source.groupId, m.userId);
-        name = profile.displayName;
+        const p = await client.getGroupMemberProfile(event.source.groupId, m.userId);
+        name = p.displayName;
       } catch {}
 
-      messages.push({
+      await client.replyMessage(event.replyToken, {
         type: 'text',
-        text:
-`@${name} さん
-
-ようこそ！
-グルに参加ありがとうございます。
-
-まずはルールを確認してね。
-ノートの下〜上まで全部チェック推奨！
-
-確認したら「いいね」お願いします👍
-お時間ある方は挨拶もぜひ✨`
+        text: `@${name} さん ようこそ！ルール確認してね👍`
       });
     }
-
-    return client.replyMessage(event.replyToken, messages);
+    return;
   }
 
-  if (event.type !== 'message') return;
-  if (event.message.type !== 'text') return;
+  // ===== ボタン =====
+  if (event.type === 'postback') {
 
+    const [action, targetId] = event.postback.data.split(':');
+    const groupId = event.source.groupId;
+
+    if (!admins.includes(event.source.userId)) return reply(event, '権限なし');
+    if (!userData[targetId]) return reply(event, '不明');
+
+    if (action === 'warn') userData[targetId].warns++;
+    if (action === 'ban') {
+      userData[targetId].blacklist = true;
+      userData[targetId].permanentBan = true;
+    }
+    if (action === 'unban') {
+      userData[targetId].blacklist = false;
+      userData[targetId].permanentBan = false;
+    }
+    if (action === 'kick') {
+      await client.kickoutFromGroup(groupId, [targetId]);
+    }
+
+    save();
+    return reply(event, '操作完了');
+  }
+
+  // ===== ユーザー処理 =====
   const userId = event.source.userId;
-  const text = event.message.text;
+  const groupId = event.source.groupId;
   const now = Date.now();
 
-  // ===== 名前取得 =====
-  let profile;
-  try {
-    profile = await client.getProfile(userId);
-  } catch {
-    profile = { displayName: 'ユーザー' };
-  }
-
-  // ===== 初期化 =====
   if (!userData[userId]) {
+    const profile = await client.getProfile(userId);
     userData[userId] = {
       name: profile.displayName,
       warns: 0,
-      lastWarn: 0,
       reports: 0,
       blacklist: false,
+      permanentBan: false,
       lastMsg: '',
-      lastTime: 0
+      lastTime: 0,
+      stampCount: 0,
+      lastStampTime: 0
     };
     save();
   }
 
   const user = userData[userId];
 
-  // ===== 時間リセット =====
-  if (now - user.lastWarn > 600000) {
-    user.warns = 0;
+  // ===== 永久BAN =====
+  if (user.permanentBan) {
+    try {
+      await client.kickoutFromGroup(groupId, [userId]);
+    } catch {}
+    return;
   }
 
   let warned = false;
 
-  // ===== NGワード =====
-  if (ngWords.some(w => text.includes(w))) {
-    user.warns++;
-    user.lastWarn = now;
-    warned = true;
+  // ===== スタンプ処理 =====
+  if (event.message && event.message.type === 'sticker') {
+
+    if (now - user.lastStampTime < 3000) {
+      user.stampCount++;
+    } else {
+      user.stampCount = 1;
+    }
+
+    user.lastStampTime = now;
+
+    if (user.stampCount >= 3) {
+      user.warns++;
+      warned = true;
+    }
   }
 
-  // ===== 連投 =====
-  if (!warned && text === user.lastMsg && now - user.lastTime < 3000) {
-    user.warns++;
-    user.lastWarn = now;
-    warned = true;
-  }
+  // ===== テキスト処理 =====
+  if (event.message && event.message.type === 'text') {
 
-  user.lastMsg = text;
-  user.lastTime = now;
+    const text = event.message.text;
+
+    if (ngWords.some(w => text.includes(w))) {
+      user.warns++;
+      warned = true;
+    }
+
+    if (!warned && text === user.lastMsg && now - user.lastTime < 3000) {
+      user.warns++;
+      warned = true;
+    }
+
+    user.lastMsg = text;
+    user.lastTime = now;
+
+    // ===== 通報 =====
+    if (text.startsWith('通報')) {
+      const name = text.split(' ')[1];
+      const found = Object.entries(userData).find(([id,u]) => u.name === name);
+
+      if (!found) return reply(event, '不明');
+
+      const [, target] = found;
+      target.reports++;
+
+      if (target.reports >= 2) target.warns++;
+
+      save();
+      return reply(event, '通報受付');
+    }
+
+    // ===== 管理UI =====
+    if (text === '/管理') {
+
+      if (!admins.includes(userId)) return reply(event, '権限なし');
+
+      const bubbles = Object.entries(userData).map(([id,u]) => ({
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            { type: 'text', text: u.name },
+            { type: 'text', text: `警告:${u.warns}` },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                btn('警告', `warn:${id}`),
+                btn('BAN', `ban:${id}`),
+                btn('解除', `unban:${id}`),
+                btn('キック', `kick:${id}`)
+              ]
+            }
+          ]
+        }
+      }));
+
+      return client.replyMessage(event.replyToken, {
+        type: 'flex',
+        altText: '管理',
+        contents: {
+          type: 'carousel',
+          contents: bubbles
+        }
+      });
+    }
+  }
 
   // ===== 警告表示 =====
   if (warned) {
     save();
-    return reply(event, `⚠️ ${user.name} 警告（${user.warns}回）`);
+    return reply(event, `⚠️ ${user.name} 警告(${user.warns})`);
   }
 
-  // ===== 通報 =====
-  if (text.startsWith('通報')) {
-    const name = text.split(' ')[1];
-    const found = findUser(name);
-
-    if (!found) return reply(event, 'ユーザー不明');
-
-    const [, target] = found;
-    target.reports++;
-
-    if (target.reports >= 2) {
-      target.warns++;
-      target.reports = 0;
-    }
-
-    save();
-    return reply(event, `通報受付: ${target.name}`);
-  }
-
-  // ===== BAN条件 =====
+  // ===== 自動キック =====
   if (user.warns >= 5 && user.reports >= 2) {
-    user.blacklist = true;
+    user.permanentBan = true;
     save();
-    return reply(event, `🚫 ${user.name} は制限対象`);
+
+    try {
+      await client.kickoutFromGroup(groupId, [userId]);
+    } catch {}
+
+    return reply(event, '強制退出');
   }
+}
 
-  if (user.blacklist) {
-    return reply(event, `⚠️ ${user.name} は制限中`);
-  }
-
-  // ===== 管理者 =====
-  if (text.startsWith('/')) {
-
-    if (!admins.includes(userId)) {
-      return reply(event, '権限なし');
+// ===== ボタン =====
+function btn(label, data) {
+  return {
+    type: 'button',
+    action: {
+      type: 'postback',
+      label: label,
+      data: data
     }
-
-    const parts = text.split(' ');
-    const cmd = parts[0];
-    const name = parts[1];
-
-    const found = findUser(name);
-    if (!found) return reply(event, 'ユーザー不明');
-
-    const [, target] = found;
-
-    if (cmd === '/警告') target.warns++;
-    if (cmd === '/追加') target.blacklist = true;
-    if (cmd === '/解除') target.blacklist = false;
-
-    save();
-    return reply(event, `管理操作: ${target.name}`);
-  }
-
-  // ===== メンション風 =====
-  if (text.startsWith('@')) {
-    return reply(event, `👉 ${text.replace('@','')} さんへ`);
-  }
-
-  // ===== ルール =====
-  if (text === 'ルール') {
-    return reply(event, '暴言・連投・通報で制限');
-  }
+  };
 }
 
 // ===== 返信 =====
@@ -215,4 +250,4 @@ function reply(event, text) {
   });
 }
 
-app.listen(3000, () => console.log('BOT起動'));
+app.listen(3000);
