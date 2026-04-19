@@ -10,12 +10,9 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
-// ===== 本管理（BOTも含める）=====
+// ===== 管理者 =====
 let adminData = {
-  owner: [
-    'Ud9ae0b76918ab20e33fb8b25c78a5f95',
-    'BOT_USER_ID'
-  ],
+  owner: ['Ud9ae0b76918ab20e33fb8b25c78a5f95'], // あなた
   sub: []
 };
 
@@ -77,15 +74,16 @@ async function handleEvent(event){
 
 さて、グルに参加したら、まずルールを確認してね。
 だいたいのグルは、ノートにルールが書いてあります。
-ルールはノートの下の方に書いてあることが多いけど、たまに真ん中や上の方にも書いてあることがあります。出来るだけ全部目を通しましょう。確認しましたらイイね押して下さいねっ！
+ルールは下〜上まで全部チェックしてね！
 
-お時間あるメンバー様は挨拶お願い致します。`
+確認したらいいね👍
+挨拶もお願いします✨`
       });
     }
     return;
   }
 
-  // ===== ボタン操作 =====
+  // ===== ボタン =====
   if(event.type==='postback'){
     const [action,id]=event.postback.data.split(':');
     const groupId=event.source.groupId;
@@ -149,6 +147,11 @@ async function handleEvent(event){
   // ===== テキスト =====
   if(event.message.type==='text'){
     const text=event.message.text;
+
+    // ★ ID取得コマンド（今回追加）
+    if (text === 'id') {
+      return reply(event, `あなたのID: ${userId}`);
+    }
 
     // ===== 管理コマンド =====
     if(text.startsWith('/')){
@@ -270,7 +273,7 @@ ${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
     return reply(event,`⚠️ ${user.name} 警告(${user.warns})`);
   }
 
-  // ===== 自動キック =====
+  // 自動キック
   if(user.warns>=5 && user.reports>=2){
     user.permanentBan=true;
     save();
