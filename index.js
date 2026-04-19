@@ -9,8 +9,10 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
-// ===== 設定 =====
-const admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95']; // ←後で入れる
+// ===== 管理者設定（あなたのID）=====
+const admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95'];
+
+// ===== NGワード =====
 const ngWords = ['死ね', 'バカ', '消えろ'];
 
 // ===== ユーザーデータ =====
@@ -30,16 +32,13 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 // ===== メイン処理 =====
 async function handleEvent(event) {
   if (event.type !== 'message') return Promise.resolve(null);
+  if (event.message.type !== 'text') return Promise.resolve(null);
 
   const userId = event.source.userId;
-
-  // ===== 画像・スタンプ無視 =====
-ととののほ  if (event.message.type !== 'text') return Promise.resolve(null);
-
   const text = event.message.text;
   const now = Date.now();
 
-  // ===== 初期化 =====
+  // 初期化
   if (!userData[userId]) {
     userData[userId] = {
       warns: 0,
@@ -52,18 +51,18 @@ async function handleEvent(event) {
 
   const user = userData[userId];
 
-  // ===== ★ ID取得 =====
+  // ===== ID取得 =====
   if (text === 'id') {
     return reply(event, `あなたのID: ${userId}`);
   }
 
-  // ===== ① NGワード =====
+  // ===== NGワード =====
   if (ngWords.some(word => text.includes(word))) {
     user.warns++;
     return reply(event, `⚠️ NGワード検知（${user.warns}回目）`);
   }
 
-  // ===== ② スパム検知 =====
+  // ===== スパム検知 =====
 
   // 同文連投
   if (text === user.lastMessage) {
@@ -85,34 +84,38 @@ async function handleEvent(event) {
   user.lastMessage = text;
   user.lastTime = now;
 
-  // ===== ③ ブラックリスト =====
+  // ===== ブラックリスト =====
   if (user.blacklist) {
     return reply(event, `⚠️ 要注意ユーザーです`);
   }
 
-  // ===== ④ 管理者コマンド =====
+  // ===== 管理者コマンド =====
   if (text.startsWith('/')) {
 
     if (!admins.includes(userId)) {
       return reply(event, '権限がありません');
     }
 
-    if (text.startsWith('/警告')) {
+    if (text === '/確認') {
+      return reply(event, 'BOT正常稼働中');
+    }
+
+    if (text === '/警告') {
       user.warns++;
       return reply(event, `⚠️ 管理者警告（${user.warns}回）`);
     }
 
-    if (text.startsWith('/追加')) {
+    if (text === '/追加') {
       user.blacklist = true;
       return reply(event, 'ブラックリスト登録しました');
     }
 
-    if (text.startsWith('/解除')) {
+    if (text === '/解除') {
       user.blacklist = false;
       return reply(event, 'ブラックリスト解除しました');
     }
 
-    if (text.startsWith('/ルール')) {
+    if (text === '/ルール') {
       return reply(event,
         '【グループルール】\n' +
         '・暴言禁止\n' +
@@ -135,7 +138,7 @@ async function handleEvent(event) {
   return Promise.resolve(null);
 }
 
-// ===== 返信 =====
+// ===== 返信処理 =====
 function reply(event, text) {
   return client.replyMessage(event.replyToken, {
     type: 'text',
