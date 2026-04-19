@@ -10,11 +10,16 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
+// ===== 管理者 =====
 const admins = ['Ud9ae0b76918ab20e33fb8b25c78a5f95'];
+
+// ===== NGワード =====
 const ngWords = ['死ね', 'バカ', '消えろ', 'アホ'];
 
+// ===== データ =====
 let userData = {};
 
+// ===== 保存 =====
 function save() {
   fs.writeFileSync('data.json', JSON.stringify(userData, null, 2));
 }
@@ -39,7 +44,43 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     .catch(() => res.end());
 });
 
+// ===== メイン =====
 async function handleEvent(event) {
+
+  // ===== 新規参加（名前付き）=====
+  if (event.type === 'memberJoined') {
+
+    const newMembers = event.joined.members;
+
+    let messages = [];
+
+    for (let m of newMembers) {
+      let name = 'ユーザー';
+
+      try {
+        const profile = await client.getGroupMemberProfile(event.source.groupId, m.userId);
+        name = profile.displayName;
+      } catch {}
+
+      messages.push({
+        type: 'text',
+        text:
+`@${name} さん
+
+ようこそ！
+グルに参加ありがとうございます。
+
+まずはルールを確認してね。
+ノートの下〜上まで全部チェック推奨！
+
+確認したら「いいね」お願いします👍
+お時間ある方は挨拶もぜひ✨`
+      });
+    }
+
+    return client.replyMessage(event.replyToken, messages);
+  }
+
   if (event.type !== 'message') return;
   if (event.message.type !== 'text') return;
 
@@ -47,6 +88,7 @@ async function handleEvent(event) {
   const text = event.message.text;
   const now = Date.now();
 
+  // ===== 名前取得 =====
   let profile;
   try {
     profile = await client.getProfile(userId);
@@ -54,7 +96,7 @@ async function handleEvent(event) {
     profile = { displayName: 'ユーザー' };
   }
 
-  // 初期化
+  // ===== 初期化 =====
   if (!userData[userId]) {
     userData[userId] = {
       name: profile.displayName,
@@ -70,9 +112,9 @@ async function handleEvent(event) {
 
   const user = userData[userId];
 
-  // ===== 時間リセット（重要）=====
+  // ===== 時間リセット =====
   if (now - user.lastWarn > 600000) {
-    user.warns = 0; // 10分でリセット
+    user.warns = 0;
   }
 
   let warned = false;
@@ -84,8 +126,8 @@ async function handleEvent(event) {
     warned = true;
   }
 
-  // ===== 連投（かなり厳しく）=====
-  if (!warned && text === user.lastMsg && now - user.lastTime < 1000) {
+  // ===== 連投 =====
+  if (!warned && text === user.lastMsg && now - user.lastTime < 3000) {
     user.warns++;
     user.lastWarn = now;
     warned = true;
@@ -93,6 +135,12 @@ async function handleEvent(event) {
 
   user.lastMsg = text;
   user.lastTime = now;
+
+  // ===== 警告表示 =====
+  if (warned) {
+    save();
+    return reply(event, `⚠️ ${user.name} 警告（${user.warns}回）`);
+  }
 
   // ===== 通報 =====
   if (text.startsWith('通報')) {
@@ -113,7 +161,7 @@ async function handleEvent(event) {
     return reply(event, `通報受付: ${target.name}`);
   }
 
-  // ===== BAN条件（安全）=====
+  // ===== BAN条件 =====
   if (user.warns >= 5 && user.reports >= 2) {
     user.blacklist = true;
     save();
@@ -153,6 +201,7 @@ async function handleEvent(event) {
     return reply(event, `👉 ${text.replace('@','')} さんへ`);
   }
 
+  // ===== ルール =====
   if (text === 'ルール') {
     return reply(event, '暴言・連投・通報で制限');
   }
@@ -166,4 +215,4 @@ function reply(event, text) {
   });
 }
 
-app.listen(3000);
+app.listen(3000, () => console.log('BOT起動'));
