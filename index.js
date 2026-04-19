@@ -15,30 +15,15 @@ const ngWords = ['死ね', 'バカ', '消えろ', 'アホ'];
 
 let userData = {};
 
-// ===== 保存 =====
-function saveData() {
+function save() {
   fs.writeFileSync('data.json', JSON.stringify(userData, null, 2));
 }
-function loadData() {
+function load() {
   if (fs.existsSync('data.json')) {
     userData = JSON.parse(fs.readFileSync('data.json'));
   }
 }
-loadData();
-
-// ===== 名前生成（被り対策）=====
-function generateName(name) {
-  let count = 1;
-  let newName = name;
-
-  const names = Object.values(userData).map(u => u.name);
-
-  while (names.includes(newName)) {
-    newName = `${name}_${count}`;
-    count++;
-  }
-  return newName;
-}
+load();
 
 // ===== 名前検索 =====
 function findUser(name) {
@@ -54,7 +39,6 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     .catch(() => res.end());
 });
 
-// ===== メイン =====
 async function handleEvent(event) {
   if (event.type !== 'message') return;
   if (event.message.type !== 'text') return;
@@ -70,51 +54,45 @@ async function handleEvent(event) {
     profile = { displayName: 'ユーザー' };
   }
 
-  // ===== 初期登録 =====
+  // 初期化
   if (!userData[userId]) {
     userData[userId] = {
-      name: generateName(profile.displayName),
+      name: profile.displayName,
       warns: 0,
+      lastWarn: 0,
+      reports: 0,
       blacklist: false,
       lastMsg: '',
-      lastTime: 0,
-      spam: 0
+      lastTime: 0
     };
-    saveData();
+    save();
   }
 
   const user = userData[userId];
 
-  // ===== 連投 =====
-  if (text === user.lastMsg) {
-    user.spam++;
-    if (user.spam >= 3) user.warns++;
-  } else {
-    user.spam = 0;
+  // ===== 時間リセット（重要）=====
+  if (now - user.lastWarn > 600000) {
+    user.warns = 0; // 10分でリセット
   }
 
-  if (now - user.lastTime < 3000) {
-    user.warns++;
-  }
-
-  user.lastMsg = text;
-  user.lastTime = now;
+  let warned = false;
 
   // ===== NGワード =====
   if (ngWords.some(w => text.includes(w))) {
     user.warns++;
+    user.lastWarn = now;
+    warned = true;
   }
 
-  // ===== 自動BAN =====
-  if (user.warns >= 2 && !user.blacklist) {
-    user.blacklist = true;
-    saveData();
-    return reply(event, `🚫 ${user.name} はBANされました`);
+  // ===== 連投（かなり厳しく）=====
+  if (!warned && text === user.lastMsg && now - user.lastTime < 1000) {
+    user.warns++;
+    user.lastWarn = now;
+    warned = true;
   }
 
-  if (user.blacklist) {
-    return reply(event, `⚠️ ${user.name} は制限中`);
-  }
+  user.lastMsg = text;
+  user.lastTime = now;
 
   // ===== 通報 =====
   if (text.startsWith('通報')) {
@@ -124,18 +102,31 @@ async function handleEvent(event) {
     if (!found) return reply(event, 'ユーザー不明');
 
     const [, target] = found;
-    target.warns++;
+    target.reports++;
 
-    if (target.warns >= 2) {
-      target.blacklist = true;
+    if (target.reports >= 2) {
+      target.warns++;
+      target.reports = 0;
     }
 
-    saveData();
+    save();
     return reply(event, `通報受付: ${target.name}`);
+  }
+
+  // ===== BAN条件（安全）=====
+  if (user.warns >= 5 && user.reports >= 2) {
+    user.blacklist = true;
+    save();
+    return reply(event, `🚫 ${user.name} は制限対象`);
+  }
+
+  if (user.blacklist) {
+    return reply(event, `⚠️ ${user.name} は制限中`);
   }
 
   // ===== 管理者 =====
   if (text.startsWith('/')) {
+
     if (!admins.includes(userId)) {
       return reply(event, '権限なし');
     }
@@ -153,49 +144,19 @@ async function handleEvent(event) {
     if (cmd === '/追加') target.blacklist = true;
     if (cmd === '/解除') target.blacklist = false;
 
-    saveData();
-    return reply(event, `操作完了: ${target.name}`);
+    save();
+    return reply(event, `管理操作: ${target.name}`);
   }
 
   // ===== メンション風 =====
   if (text.startsWith('@')) {
-    const name = text.replace('@', '');
-    return reply(event, `👉 ${name} さんへ`);
+    return reply(event, `👉 ${text.replace('@','')} さんへ`);
   }
 
   if (text === 'ルール') {
-    return reply(event, '暴言・連投・荒らし禁止');
+    return reply(event, '暴言・連投・通報で制限');
   }
 }
-
-// ===== 管理画面 =====
-app.get('/admin', (req, res) => {
-  let html = '<h1>管理画面</h1>';
-
-  Object.entries(userData).forEach(([id, u]) => {
-    html += `
-      <div>
-        ${u.name}（${u.warns}）
-        <a href="/ban?id=${id}">BAN</a>
-        <a href="/unban?id=${id}">解除</a>
-      </div><hr>
-    `;
-  });
-
-  res.send(html);
-});
-
-app.get('/ban', (req, res) => {
-  userData[req.query.id].blacklist = true;
-  saveData();
-  res.send('BAN完了');
-});
-
-app.get('/unban', (req, res) => {
-  userData[req.query.id].blacklist = false;
-  saveData();
-  res.send('解除完了');
-});
 
 // ===== 返信 =====
 function reply(event, text) {
