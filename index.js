@@ -28,24 +28,25 @@ function load() {
 }
 load();
 
+// ===== 名前検索 =====
+function findUser(name) {
+  return Object.entries(userData).find(([id, u]) => u.name === name);
+}
+
 // ===== Webhook =====
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then(() => res.end());
 });
 
-// ===== メイン =====
 async function handleEvent(event) {
 
   // ===== 新規参加 =====
   if (event.type === 'memberJoined') {
-
     for (let m of event.joined.members) {
 
       if (userData[m.userId]?.permanentBan) {
-        try {
-          await client.kickoutFromGroup(event.source.groupId, [m.userId]);
-        } catch {}
+        await client.kickoutFromGroup(event.source.groupId, [m.userId]);
         continue;
       }
 
@@ -57,7 +58,7 @@ async function handleEvent(event) {
 
       await client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `@${name} さん ようこそ！ルール確認してね👍`
+        text: `@${name} さん ようこそ！`
       });
     }
     return;
@@ -70,15 +71,12 @@ async function handleEvent(event) {
     const groupId = event.source.groupId;
 
     if (!admins.includes(event.source.userId)) return reply(event, '権限なし');
-    if (!userData[targetId]) return reply(event, '不明');
 
     if (action === 'warn') userData[targetId].warns++;
     if (action === 'ban') {
-      userData[targetId].blacklist = true;
       userData[targetId].permanentBan = true;
     }
     if (action === 'unban') {
-      userData[targetId].blacklist = false;
       userData[targetId].permanentBan = false;
     }
     if (action === 'kick') {
@@ -89,23 +87,25 @@ async function handleEvent(event) {
     return reply(event, '操作完了');
   }
 
-  // ===== ユーザー処理 =====
+  // ===== メッセージ =====
+  if (event.type !== 'message') return;
+
   const userId = event.source.userId;
   const groupId = event.source.groupId;
   const now = Date.now();
 
+  // 初期化
   if (!userData[userId]) {
-    const profile = await client.getProfile(userId);
+    const p = await client.getProfile(userId);
     userData[userId] = {
-      name: profile.displayName,
+      name: p.displayName,
       warns: 0,
       reports: 0,
-      blacklist: false,
       permanentBan: false,
       lastMsg: '',
       lastTime: 0,
       stampCount: 0,
-      lastStampTime: 0
+      lastStamp: 0
     };
     save();
   }
@@ -114,24 +114,18 @@ async function handleEvent(event) {
 
   // ===== 永久BAN =====
   if (user.permanentBan) {
-    try {
-      await client.kickoutFromGroup(groupId, [userId]);
-    } catch {}
+    await client.kickoutFromGroup(groupId, [userId]);
     return;
   }
 
   let warned = false;
 
-  // ===== スタンプ処理 =====
-  if (event.message && event.message.type === 'sticker') {
+  // ===== スタンプ =====
+  if (event.message.type === 'sticker') {
+    if (now - user.lastStamp < 3000) user.stampCount++;
+    else user.stampCount = 1;
 
-    if (now - user.lastStampTime < 3000) {
-      user.stampCount++;
-    } else {
-      user.stampCount = 1;
-    }
-
-    user.lastStampTime = now;
+    user.lastStamp = now;
 
     if (user.stampCount >= 3) {
       user.warns++;
@@ -139,16 +133,56 @@ async function handleEvent(event) {
     }
   }
 
-  // ===== テキスト処理 =====
-  if (event.message && event.message.type === 'text') {
+  // ===== テキスト =====
+  if (event.message.type === 'text') {
 
     const text = event.message.text;
 
+    // ===== 管理者コマンド =====
+    if (text.startsWith('/')) {
+
+      if (!admins.includes(userId)) return reply(event, '権限なし');
+
+      const parts = text.split(' ');
+      const cmd = parts[0];
+      const name = parts[1];
+
+      // 管理者一覧
+      if (cmd === '/管理者一覧') {
+        const list = admins.map(id => userData[id]?.name || id).join('\n');
+        return reply(event, list);
+      }
+
+      const found = findUser(name);
+      if (!found) return reply(event, 'ユーザー不明');
+
+      const [targetId, target] = found;
+
+      if (cmd === '/管理者追加') {
+        admins.push(targetId);
+        save();
+        return reply(event, `${target.name} を管理者に追加`);
+      }
+
+      if (cmd === '/管理者削除') {
+        admins = admins.filter(id => id !== targetId);
+        save();
+        return reply(event, `${target.name} を削除`);
+      }
+
+      if (cmd === '/キック') {
+        await client.kickoutFromGroup(groupId, [targetId]);
+        return reply(event, 'キック完了');
+      }
+    }
+
+    // NG
     if (ngWords.some(w => text.includes(w))) {
       user.warns++;
       warned = true;
     }
 
+    // 連投
     if (!warned && text === user.lastMsg && now - user.lastTime < 3000) {
       user.warns++;
       warned = true;
@@ -157,23 +191,21 @@ async function handleEvent(event) {
     user.lastMsg = text;
     user.lastTime = now;
 
-    // ===== 通報 =====
+    // 通報
     if (text.startsWith('通報')) {
       const name = text.split(' ')[1];
-      const found = Object.entries(userData).find(([id,u]) => u.name === name);
-
+      const found = findUser(name);
       if (!found) return reply(event, '不明');
 
       const [, target] = found;
       target.reports++;
-
       if (target.reports >= 2) target.warns++;
 
       save();
       return reply(event, '通報受付');
     }
 
-    // ===== 管理UI =====
+    // 管理画面
     if (text === '/管理') {
 
       if (!admins.includes(userId)) return reply(event, '権限なし');
@@ -211,22 +243,18 @@ async function handleEvent(event) {
     }
   }
 
-  // ===== 警告表示 =====
+  // 警告表示
   if (warned) {
     save();
     return reply(event, `⚠️ ${user.name} 警告(${user.warns})`);
   }
 
-  // ===== 自動キック =====
+  // 自動BAN
   if (user.warns >= 5 && user.reports >= 2) {
     user.permanentBan = true;
     save();
-
-    try {
-      await client.kickoutFromGroup(groupId, [userId]);
-    } catch {}
-
-    return reply(event, '強制退出');
+    await client.kickoutFromGroup(groupId, [userId]);
+    return;
   }
 }
 
