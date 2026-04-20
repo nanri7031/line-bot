@@ -97,14 +97,14 @@ async function handleEvent(event){
 
   if(event.type!=='message') return;
 
-  const userId=event.source.userId;
-  const groupId=event.source.groupId;
-  const now=Date.now();
+  const userId = event.source.userId;
+  const groupId = event.source.groupId;
+  const now = Date.now();
 
   // ===== 初期登録 =====
   if(!userData[userId]){
-    const p=await client.getProfile(userId);
-    userData[userId]={
+    const p = await client.getProfile(userId);
+    userData[userId] = {
       name:p.displayName,
       warns:0,
       reports:0,
@@ -117,7 +117,7 @@ async function handleEvent(event){
     save();
   }
 
-  const user=userData[userId];
+  const user = userData[userId];
 
   // ===== 永久BAN =====
   if(user.permanentBan){
@@ -125,157 +125,153 @@ async function handleEvent(event){
     return;
   }
 
-  let warned=false;
+  let warned = false;
 
   // ===== スタンプ =====
   if(event.message.type==='sticker'){
-    if(now-user.lastStamp<3000) user.stampCount++;
-    else user.stampCount=1;
+    if(now - user.lastStamp < 3000) user.stampCount++;
+    else user.stampCount = 1;
 
-    user.lastStamp=now;
+    user.lastStamp = now;
 
-    if(user.stampCount>=3){
+    if(user.stampCount >= 3){
       user.warns++;
-      warned=true;
+      warned = true;
     }
   }
 
   // ===== テキスト =====
   if(event.message.type==='text'){
-    const text=event.message.text;
+    const text = event.message.text;
 
-    // ===== id取得 =====
-    if (text === 'id') {
+    // ===== ID =====
+    if(text === 'id'){
       return reply(event, `あなたのID: ${userId}`);
     }
 
-    // ===== ★管理画面（最優先）=====
-    if (text === '/管理') {
-
-      if (!isAdmin(userId)) return reply(event, '権限なし');
-
-      const bubbles = Object.entries(userData).map(([id,u]) => ({
-        type: 'bubble',
-        body: {
-          type: 'box',
-          layout: 'vertical',
-          contents: [
-            { type: 'text', text: u.name },
-            { type: 'text', text: `警告:${u.warns}` },
-            {
-              type: 'box',
-              layout: 'horizontal',
-              contents: [
-                btn('警告', `warn:${id}`),
-                btn('BAN', `ban:${id}`),
-                btn('解除', `unban:${id}`),
-                btn('キック', `kick:${id}`)
-              ]
-            }
-          ]
-        }
-      }));
-
-      return client.replyMessage(event.replyToken, {
-        type: 'flex',
-        altText: '管理',
-        contents: {
-          type: 'carousel',
-          contents: bubbles
-        }
-      });
-    }
-
-    // ===== 管理コマンド =====
+    // ===== コマンド =====
     if(text.startsWith('/')){
 
-      if(!isAdmin(userId)) return reply(event,'権限なし');
+      const parts = text.split(' ');
+      const cmd = parts[0];
+      const name = parts[1];
 
-      const parts=text.split(' ');
-      const cmd=parts[0];
-      const name=parts[1];
+      // ===== 管理画面（最優先）=====
+      if(cmd === '/管理'){
+        if(!isAdmin(userId)) return reply(event,'権限なし');
 
-      if(cmd==='/管理者一覧'){
+        const bubbles = Object.entries(userData).map(([id,u])=>({
+          type:'bubble',
+          body:{
+            type:'box',
+            layout:'vertical',
+            contents:[
+              {type:'text',text:u.name},
+              {type:'text',text:`警告:${u.warns}`},
+              {
+                type:'box',
+                layout:'horizontal',
+                contents:[
+                  btn('警告',`warn:${id}`),
+                  btn('BAN',`ban:${id}`),
+                  btn('解除',`unban:${id}`),
+                  btn('キック',`kick:${id}`)
+                ]
+              }
+            ]
+          }
+        }));
+
+        return client.replyMessage(event.replyToken,{
+          type:'flex',
+          altText:'管理',
+          contents:{type:'carousel',contents:bubbles}
+        });
+      }
+
+      // ===== 管理者一覧 =====
+      if(cmd === '/管理者一覧'){
         return reply(event,
 `本管理
 ${adminData.owner.map(id=>userData[id]?.name||id).join('\n')}
 
 副管理
-${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
-        );
+${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`);
       }
 
-      const found=findUser(name);
+      // ===== 名前必要コマンド =====
+      const found = findUser(name);
       if(!found) return reply(event,'ユーザー不明');
 
-      const [targetId,target]=found;
+      const [targetId] = found;
 
-      if(cmd==='/本管理追加'){
+      if(cmd === '/キック'){
+        await client.kickoutFromGroup(groupId,[targetId]);
+        return reply(event,'キック完了');
+      }
+
+      if(cmd === '/本管理追加'){
         if(!isOwner(userId)) return reply(event,'本管理のみ');
         adminData.owner.push(targetId);
         save();
         return reply(event,'追加完了');
       }
 
-      if(cmd==='/副管理追加'){
+      if(cmd === '/副管理追加'){
         if(!isOwner(userId)) return reply(event,'本管理のみ');
         adminData.sub.push(targetId);
         save();
         return reply(event,'追加完了');
       }
 
-      if(cmd==='/管理者削除'){
+      if(cmd === '/管理者削除'){
         if(!isOwner(userId)) return reply(event,'本管理のみ');
-        adminData.owner=adminData.owner.filter(id=>id!==targetId);
-        adminData.sub=adminData.sub.filter(id=>id!==targetId);
+        adminData.owner = adminData.owner.filter(id=>id!==targetId);
+        adminData.sub = adminData.sub.filter(id=>id!==targetId);
         save();
         return reply(event,'削除完了');
       }
-
-      if(cmd==='/キック'){
-        await client.kickoutFromGroup(groupId,[targetId]);
-        return reply(event,'キック完了');
-      }
     }
 
-    // NG
+    // ===== NGワード =====
     if(ngWords.some(w=>text.includes(w))){
       user.warns++;
-      warned=true;
+      warned = true;
     }
 
-    // 連投
-    if(!warned && text===user.lastMsg && now-user.lastTime<3000){
+    // ===== 連投 =====
+    if(!warned && text === user.lastMsg && now - user.lastTime < 3000){
       user.warns++;
-      warned=true;
+      warned = true;
     }
 
-    user.lastMsg=text;
-    user.lastTime=now;
+    user.lastMsg = text;
+    user.lastTime = now;
 
-    // 通報
+    // ===== 通報 =====
     if(text.startsWith('通報')){
-      const name=text.split(' ')[1];
-      const found=findUser(name);
+      const name = text.split(' ')[1];
+      const found = findUser(name);
       if(!found) return reply(event,'不明');
 
-      const [,t]=found;
+      const [,t] = found;
       t.reports++;
-      if(t.reports>=2) t.warns++;
+      if(t.reports >= 2) t.warns++;
 
       save();
       return reply(event,'通報受付');
     }
   }
 
+  // ===== 警告表示 =====
   if(warned){
     save();
     return reply(event,`⚠️ ${user.name} 警告(${user.warns})`);
   }
 
-  // 自動キック
-  if(user.warns>=5 && user.reports>=2){
-    user.permanentBan=true;
+  // ===== 自動キック =====
+  if(user.warns >= 5 && user.reports >= 2){
+    user.permanentBan = true;
     save();
     await client.kickoutFromGroup(groupId,[userId]);
   }
