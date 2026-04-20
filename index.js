@@ -12,7 +12,7 @@ const client = new line.Client(config);
 
 // ===== 管理者 =====
 let adminData = {
-  owner: ['Ud9ae0b76918ab20e33fb8b25c78a5f95'], // あなた
+  owner: ['Ud9ae0b76918ab20e33fb8b25c78a5f95'],
   sub: []
 };
 
@@ -72,12 +72,8 @@ async function handleEvent(event){
 ようこそ！
 グルに参加ありがとうございます。
 
-さて、グルに参加したら、まずルールを確認してね。
-だいたいのグルは、ノートにルールが書いてあります。
-ルールは下〜上まで全部チェックしてね！
-
-確認したらいいね👍
-挨拶もお願いします✨`
+ルール確認お願いします👍
+確認後いいね＆挨拶お願いします✨`
       });
     }
     return;
@@ -148,9 +144,46 @@ async function handleEvent(event){
   if(event.message.type==='text'){
     const text=event.message.text;
 
-    // ★ ID取得コマンド（今回追加）
+    // ===== id取得 =====
     if (text === 'id') {
       return reply(event, `あなたのID: ${userId}`);
+    }
+
+    // ===== ★管理画面（最優先）=====
+    if (text === '/管理') {
+
+      if (!isAdmin(userId)) return reply(event, '権限なし');
+
+      const bubbles = Object.entries(userData).map(([id,u]) => ({
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            { type: 'text', text: u.name },
+            { type: 'text', text: `警告:${u.warns}` },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                btn('警告', `warn:${id}`),
+                btn('BAN', `ban:${id}`),
+                btn('解除', `unban:${id}`),
+                btn('キック', `kick:${id}`)
+              ]
+            }
+          ]
+        }
+      }));
+
+      return client.replyMessage(event.replyToken, {
+        type: 'flex',
+        altText: '管理',
+        contents: {
+          type: 'carousel',
+          contents: bubbles
+        }
+      });
     }
 
     // ===== 管理コマンド =====
@@ -205,7 +238,7 @@ ${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
       }
     }
 
-    // NGワード
+    // NG
     if(ngWords.some(w=>text.includes(w))){
       user.warns++;
       warned=true;
@@ -232,39 +265,6 @@ ${adminData.sub.map(id=>userData[id]?.name||id).join('\n')}`
 
       save();
       return reply(event,'通報受付');
-    }
-
-    // 管理UI
-    if(text==='/管理'){
-      if(!isAdmin(userId)) return reply(event,'権限なし');
-
-      const bubbles=Object.entries(userData).map(([id,u])=>({
-        type:'bubble',
-        body:{
-          type:'box',
-          layout:'vertical',
-          contents:[
-            {type:'text',text:u.name},
-            {type:'text',text:`警告:${u.warns}`},
-            {
-              type:'box',
-              layout:'horizontal',
-              contents:[
-                btn('警告',`warn:${id}`),
-                btn('BAN',`ban:${id}`),
-                btn('解除',`unban:${id}`),
-                btn('キック',`kick:${id}`)
-              ]
-            }
-          ]
-        }
-      }));
-
-      return client.replyMessage(event.replyToken,{
-        type:'flex',
-        altText:'管理',
-        contents:{type:'carousel',contents:bubbles}
-      });
     }
   }
 
